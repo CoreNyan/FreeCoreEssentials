@@ -1,0 +1,89 @@
+database:
+  host: "127.0.0.1"
+  port: 3306
+  name: "blessing_skin"
+  username: "blessing_skin"
+  password: "change-me"
+  use-ssl: false
+
+  # Required by MySQL caching_sha2_password/sha256_password when SSL is off.
+  # Enable this only when the database connection uses localhost or a trusted network.
+  allow-public-key-retrieval: true
+
+  # HikariCP connection-pool settings.
+  maximum-pool-size: 6
+  minimum-idle: 1
+  connection-timeout-ms: 1500
+  validation-timeout-ms: 1000
+  max-lifetime-ms: 1800000
+  keepalive-time-ms: 30000
+
+  # JDBC and Vault-call hard timeouts. The operation timeout should be greater
+  # than the socket timeout, but still low enough to protect the server tick.
+  connect-timeout-ms: 1500
+  socket-timeout-ms: 2000
+  query-timeout-seconds: 2
+  operation-timeout-ms: 2500
+
+economy:
+  currency-singular: "H币"
+  currency-plural: "H币"
+  fractional-digits: 2
+
+# Per-player home limit. Set to -1 for unlimited homes.
+homes:
+  max-per-player: 5
+
+administration-sync:
+  enabled: true
+
+# CommandPanels menu opened by /menu and /m.
+menu:
+  enabled: true
+  open-command: "pa open main_menu"
+
+# Restricts non-OP players to the current lobby world border rectangle, including minecarts.
+# The center and size mirror /worldborder get for lobby; OPs and the bypass permission are exempt.
+lobby-boundary:
+  enabled: true
+  world: "lobby"
+  center-x: 319.5
+  center-z: -131.5
+  size: 545.0
+  op-bypass: true
+  bypass-permission: "freecoreessentials.lobby-boundary.bypass"
+  notify: true
+
+# Native TextDisplay wealth leaderboard. Use /fce wealth hologram where you stand to create one.
+wealth-hologram:
+  enabled: true
+  # Number of non-OP, non-excluded players shown on each hologram.
+  top-size: 10
+  # Database refresh interval. Balances are queried asynchronously.
+  refresh-seconds: 60
+  # Vertical offset above the command executor's current position.
+  height: 2.0
+  line-width: 512
+  # false means blocks correctly obscure the hologram.
+  see-through: false
+  # Player names excluded from the ranking, case-insensitive. OPs are always excluded.
+  excluded-players: []
+  # Extra rows fetched so excluded players do not consume the displayed top-size.
+  candidate-limit: 500
+
+bedrock-accounts:
+  enabled: true
+  bcrypt-cost: 12
+  password-min-length: 8
+  password-reminder-minutes: 5
+
+# Publishes the skin selected in Blessing Skin to Java and Bedrock clients.
+# The URL must be publicly reachable by Java clients and by the Geyser server.
+# Official Blessing Skin uses: https://skin.example.com/textures/{hash}
+skins:
+  enabled: false
+  texture-url-template: "https://skin.example.com/textures/{hash}"
+  # Blessing Skin's signed Yggdrasil profile endpoints. These properties are
+  # used for Java/Geyser profile packets; texture pixels still use the URL above.
+  yggdrasil-profile-url-template: "https://account.freecore.cc/api/yggdrasil/api/users/profiles/minecraft/{name}"
+  yggdrasil-session-url-template: "https://account.freecore.cc/api/yggdrasil/sessionserver/session/minecraft/profile/{uuid}"

@@ -1,0 +1,102 @@
+name: FreeCoreEssentials
+version: 2.1.1
+main: io.github.freecoreessentials.FreeCoreEssentialsPlugin
+description: Vault economy and Floodgate account integration backed by Blessing Skin MySQL.
+api-version: '1.21'
+authors: [FreeCore]
+depend: [Vault]
+softdepend: [floodgate, Geyser-Spigot, PlaceholderAPI, FotiaTags, DonutScoreboard, HuskSync, CommandPanels]
+loadbefore: [FreeCoreShop]
+commands:
+  fce:
+    aliases: [freecoreessentials]
+    description: 管理 FreeCoreEssentials
+    usage: /fce reload
+  menu:
+    description: 打开主菜单
+    usage: /menu
+  m:
+    description: 打开主菜单
+    usage: /m
+  warp:
+    aliases: [warps]
+    description: 使用或管理服务器传送点
+    usage: /warp <名称|list|set|delete>
+    permission: freecoreessentials.warp.use
+  spawn:
+    description: 传送到服务器出生点
+    usage: /spawn
+    permission: freecoreessentials.spawn.use
+  setspawn:
+    description: 设置服务器出生点
+    usage: /setspawn
+    permission: freecoreessentials.spawn.set
+  back:
+    description: 回到上一次传送前的位置
+    usage: /back
+    permission: freecoreessentials.back.use
+  home:
+    description: 传送到自己的家
+    usage: /home <名称|list|remove <名称>>
+    permission: freecoreessentials.home.use
+  sethome:
+    description: 在当前位置设置家
+    usage: /sethome <名称>
+    permission: freecoreessentials.sethome.use
+  balance:
+    aliases: [bal, money]
+    description: 查看自己或其他玩家的 H币余额
+    usage: /balance [玩家]
+    permission: freecoreeconomy.balance
+  pay:
+    description: 向另一个皮肤站账户转账
+    usage: /pay <玩家> <金额>
+    permission: freecoreeconomy.pay
+  eco:
+    aliases: [economy]
+    description: 管理玩家的 H币余额
+    usage: /eco <give|take|set> <玩家> <金额>
+    permission: freecoreeconomy.admin
+  setpassword:
+    description: 设置基岩版玩家的官网密码
+    usage: /setpassword <密码>
+    permission: freecoreessentials.setpassword
+  invsee:
+    description: 查看并编辑任意子服在线玩家的背包
+    usage: /invsee <玩家>
+    permission: freecoreessentials.invsee
+permissions:
+  freecoreeconomy.balance:
+    default: true
+  freecoreeconomy.balance.others:
+    default: op
+  freecoreeconomy.pay:
+    default: true
+  freecoreeconomy.admin:
+    default: op
+  freecoreessentials.setpassword:
+    default: true
+  freecoreessentials.reload:
+    default: op
+  freecoreessentials.wealthhologram:
+    default: op
+  freecoreessentials.warp.use:
+    default: true
+  freecoreessentials.warp.admin:
+    default: op
+  freecoreessentials.spawn.use:
+    default: true
+  freecoreessentials.spawn.set:
+    default: op
+  freecoreessentials.back.use:
+    default: true
+  freecoreessentials.home.use:
+    default: true
+  freecoreessentials.sethome.use:
+    default: true
+  freecoreessentials.lobby-boundary.bypass:
+    default: op
+  freecoreessentials.invsee:
+    default: op
+  freecoreessentials.crossserver.command:
+    default: op

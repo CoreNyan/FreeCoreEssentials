@@ -1,0 +1,153 @@
+prefix:
+  economy: "&8[&6经济&8] &r"
+  bedrock-account: "&8[&b基岩账户&8] &r"
+  freecoreessentials: " &6&lFreeCore &f&l>>> &f"
+
+player:
+  join: ""
+  quit: ""
+
+freecoreessentials:
+  usage: "用法：/fce reload 或 /fce wealth hologram [create|remove|refresh]"
+  no-permission: "你没有重载语言文件的权限。"
+  reload-success: "语言文件 zh_CN.yml 已重新加载。"
+
+menu:
+  player-only: "该命令只能由玩家执行。"
+  disabled: "主菜单功能当前已关闭。"
+  unavailable: "CommandPanels 未安装或未启用。"
+  invalid-command: "主菜单打开指令未配置。"
+  open-failed: "主菜单打开失败，请联系管理员。"
+
+vanilla-command:
+  sent: "已将 /{0} 发送到 {1} 子服执行。"
+  give: "给予了玩家 {0} {1} 个 {2}。"
+  teleport: "传送到 {0}。"
+  ban: "已封禁玩家 {0}。"
+  pardon: "已解除玩家 {0} 的封禁。"
+  kick: "已将玩家 {0} 踢出服务器。"
+  kill: "已击杀目标 {0}。"
+  clear: "已清除玩家 {0} 的物品。"
+  effect: "已为玩家 {0} 执行效果指令。"
+  executed: "原版指令 /{0} 已执行。"
+  execution-succeeded: "指令 /{0} 已执行成功。"
+  execution-failed: "指令 /{0} 执行失败。"
+  teleport-switching: "正在切换到 {0} 子服，随后执行传送指令。"
+  teleport-switch-failed: "无法切换到目标子服。"
+  teleport-completed: "已传送到 {0} 所在位置。"
+
+game-mode:
+  changed: "游戏模式已切换为 {0}。"
+  survival: "生存模式"
+  creative: "创造模式"
+  adventure: "冒险模式"
+  spectator: "旁观模式"
+
+wealth-hologram:
+  title: "&6&lH币富豪榜"
+  entry: "&e#{0} &f{1} &a{2}"
+  empty: "&7暂无符合条件的玩家"
+  player-only: "该命令只能由玩家执行。"
+  usage: "用法：/fce wealth hologram [create|remove|refresh]"
+  created: "已在你当前位置创建富豪榜悬浮字。"
+  removed: "已移除附近的富豪榜悬浮字。"
+  refreshing: "正在刷新附近的富豪榜悬浮字。"
+  not-found: "附近 8 格内没有富豪榜悬浮字。"
+  unavailable: "富豪榜功能尚未就绪或已在配置中禁用。"
+
+teleport:
+  player-only: "该命令只能由玩家执行。"
+  no-permission: "你没有执行此操作的权限。"
+  failed: "传送失败，请稍后重试。"
+  world-unavailable: "目标世界当前未加载或不存在。"
+  warp:
+    usage: "用法：/warp <名称>，/warp list，/warp set <名称>，/warp delete <名称>"
+    set-usage: "用法：/warp set <名称>"
+    delete-usage: "用法：/warp delete <名称>"
+    invalid-name: "传送点名称只能包含中文、字母、数字、下划线或短横线，最长 32 个字符。"
+    empty: "当前没有可用传送点。"
+    list: "可用传送点：{0}"
+    not-found: "找不到传送点：{0}"
+    set: "已将传送点 {0} 设置在你当前位置。"
+    deleted: "已删除传送点：{0}"
+    teleported: "已传送到 {0}。"
+  spawn:
+    usage: "用法：/spawn"
+    not-set: "服务器出生点尚未设置。"
+    teleported: "已传送到服务器出生点。"
+  setspawn:
+    usage: "用法：/setspawn"
+    set: "已将服务器出生点设置在你当前位置。"
+  back:
+    usage: "用法：/back"
+    not-found: "没有可返回的上一次传送位置。"
+    teleported: "已返回上一次传送前的位置。"
+  home:
+    usage: "用法：/home <名称>，/home list，/home remove <名称>"
+    invalid-name: "家的名称只能包含中文、字母、数字、下划线或短横线，最长 32 个字符。"
+    empty: "你当前没有设置任何家。"
+    list: "你的家：{0}"
+    remove-usage: "用法：/home remove <名称>"
+    removed: "已删除家 {0}。"
+    not-found: "找不到名为 {0} 的家。"
+    teleported: "已传送到家 {0}。"
+  sethome:
+    usage: "用法：/sethome <名称>"
+    set: "已将家 {0} 设置在你当前位置。"
+    limit-reached: "你的家数量已达到上限（{0} 个）。可覆盖已有同名家，或先使用 /home remove <名称> 删除一个。"
+
+lobby-boundary:
+  denied: "你不能离开主城活动范围。"
+
+economy:
+  usage:
+    balance: "用法：/balance [玩家]"
+    balance-console: "控制台用法：/balance <玩家>"
+    pay: "用法：/pay <玩家> <金额>"
+    admin: "用法：/eco <give|take|set> <玩家> <金额>"
+  balance:
+    not-found: "未找到皮肤站账户：{0}"
+    other: "{0} 的余额：{1}"
+    self: "你的余额：{0}"
+  pay:
+    sent: "已向 {0} 支付 {1}，当前余额：{2}"
+    received: "{0} 向你支付了 {1}，当前余额：{2}"
+    same-account: "不能向自己转账。"
+    target-not-found: "未找到收款人的皮肤站账户：{0}"
+    source-not-found: "未找到你的皮肤站账户。"
+    insufficient-funds: "余额不足，当前余额：{0}"
+    invalid-precision: "金额格式无效，最多支持 {0} 位小数。"
+    database-failure: "数据库操作失败，请联系管理员检查服务器日志。"
+    invalid-amount: "金额必须是大于 0 的有效数字。"
+    player-only: "只有玩家可以使用 /pay。"
+  admin:
+    completed: "已对 {0} 执行 {1} {2}，当前余额：{3}"
+    invalid-amount: "金额格式无效；give/take 必须大于 0，set 可以为 0。"
+  error:
+    no-balance-others-permission: "你没有查看其他玩家余额的权限。"
+    no-admin-permission: "你没有管理经济的权限。"
+    unknown-operation: "未知操作。用法：/eco <give|take|set> <玩家> <金额>"
+    operation-failed: "经济操作失败。"
+    account-not-found: "未找到对应的皮肤站账户。"
+    insufficient-funds: "余额不足。"
+    invalid-precision: "金额的小数位数不符合配置。"
+
+bedrock-account:
+  command:
+    only-floodgate: "这个命令仅用于通过 Floodgate 登录的基岩版玩家。"
+    usage: "用法：/setpassword <密码>"
+    password-too-short: "密码长度不能少于 {0} 个字符。"
+    password-too-long: "密码的 UTF-8 编码不能超过 72 字节。"
+    password-updating: "正在安全地更新官网密码..."
+    password-update-failed: "密码更新失败，请联系管理员检查数据库日志。"
+    account-not-found: "未找到与你的 XUID 对应的官网账户，请重新登录后再试。"
+    password-updated: "官网密码已使用 Laravel 兼容的 BCrypt 安全更新。"
+    xuid-unavailable: "暂时无法读取你的 Floodgate XUID，请重新登录后再试。"
+    player-only: "只有基岩版玩家可以使用这个命令。"
+  sync:
+    failed: "官网账户同步失败，请联系管理员检查数据库日志。"
+    created: "已自动创建官网账户。"
+    renamed: "检测到 Xbox 名称变化，官网账户名称已同步。"
+    name-adjusted: "名称与现有 Java 账号冲突，映射名称已调整为：{0}"
+    account-details: "官网玩家账号：{0}；登录邮箱：{1}"
+    password-reminder: "请尽快使用 /setpassword 设置您的官网密码！"
