@@ -1,11 +1,11 @@
 name: FreeCoreEssentials
-version: 2.1.1
+version: 2.1.3
 main: io.github.freecoreessentials.FreeCoreEssentialsPlugin
 description: Vault economy and Floodgate account integration backed by Blessing Skin MySQL.
 api-version: '1.21'
 authors: [FreeCore]
 depend: [Vault]
-softdepend: [floodgate, Geyser-Spigot, PlaceholderAPI, FotiaTags, DonutScoreboard, HuskSync, CommandPanels]
+softdepend: [floodgate, Geyser-Spigot, PlaceholderAPI, FotiaTags, DonutScoreboard, HuskSync, CommandPanels, SimpleVanish]
 loadbefore: [FreeCoreShop]
 commands:
   fce:
@@ -43,11 +43,21 @@ commands:
     description: 在当前位置设置家
     usage: /sethome <名称>
     permission: freecoreessentials.sethome.use
+  rtp:
+    aliases: [randomteleport]
+    description: Random teleport within the current world border
+    usage: /rtp
+    permission: freecoreessentials.rtp.use
   balance:
     aliases: [bal, money]
     description: 查看自己或其他玩家的 H币余额
     usage: /balance [玩家]
     permission: freecoreeconomy.balance
+  baltop:
+    aliases: [balancetop]
+    description: 在聊天栏查看前100名H币富豪榜
+    usage: /baltop [页码]
+    permission: freecoreeconomy.baltop
   pay:
     description: 向另一个皮肤站账户转账
     usage: /pay <玩家> <金额>
@@ -65,11 +75,27 @@ commands:
     description: 查看并编辑任意子服在线玩家的背包
     usage: /invsee <玩家>
     permission: freecoreessentials.invsee
+  tpa:
+    description: Request teleport to an online player
+    usage: /tpa <player>
+    permission: freecoreessentials.tpa
+  tpaccept:
+    aliases: [tpyes]
+    description: Accept a pending teleport request
+    usage: /tpaccept [player]
+    permission: freecoreessentials.tpa
+  tpdeny:
+    aliases: [tpno]
+    description: Deny a pending teleport request
+    usage: /tpdeny [player]
+    permission: freecoreessentials.tpa
 permissions:
   freecoreeconomy.balance:
     default: true
   freecoreeconomy.balance.others:
     default: op
+  freecoreeconomy.baltop:
+    default: true
   freecoreeconomy.pay:
     default: true
   freecoreeconomy.admin:
@@ -94,9 +120,13 @@ permissions:
     default: true
   freecoreessentials.sethome.use:
     default: true
+  freecoreessentials.rtp.use:
+    default: true
   freecoreessentials.lobby-boundary.bypass:
     default: op
   freecoreessentials.invsee:
     default: op
+  freecoreessentials.tpa:
+    default: true
   freecoreessentials.crossserver.command:
     default: op

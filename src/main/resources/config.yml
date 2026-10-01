@@ -34,6 +34,20 @@ economy:
 homes:
   max-per-player: 5
 
+# Random teleport stays inside the current world's native WorldBorder.
+random-teleport:
+  enabled: true
+  max-attempts: 32
+
+# Automatically respawn players after death and hide the death screen.
+auto-respawn:
+  enabled: true
+
+# New players spawn at the lobby world's spawn instead of server.properties level-name.
+first-join-spawn:
+  enabled: true
+  world: "lobby"
+
 administration-sync:
   enabled: true
 
@@ -41,6 +55,8 @@ administration-sync:
 menu:
   enabled: true
   open-command: "pa open main_menu"
+  shortcut-enabled: true
+  shortcut-menu: "main_manu"
 
 # Restricts non-OP players to the current lobby world border rectangle, including minecarts.
 # The center and size mirror /worldborder get for lobby; OPs and the bypass permission are exempt.
@@ -85,5 +101,5 @@ skins:
   texture-url-template: "https://skin.example.com/textures/{hash}"
   # Blessing Skin's signed Yggdrasil profile endpoints. These properties are
   # used for Java/Geyser profile packets; texture pixels still use the URL above.
-  yggdrasil-profile-url-template: "https://account.freecore.cc/api/yggdrasil/api/users/profiles/minecraft/{name}"
-  yggdrasil-session-url-template: "https://account.freecore.cc/api/yggdrasil/sessionserver/session/minecraft/profile/{uuid}"
+  yggdrasil-profile-url-template: "http://127.0.0.1:25567/api/yggdrasil/api/users/profiles/minecraft/{name}"
+  yggdrasil-session-url-template: "http://127.0.0.1:25567/api/yggdrasil/sessionserver/session/minecraft/profile/{uuid}"

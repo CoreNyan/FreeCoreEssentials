@@ -1,6 +1,7 @@
 package io.github.freecoreessentials.display;
 
 import io.github.freecoreeconomy.database.DatabaseGateway;
+import io.github.freecoreeconomy.command.WealthBalanceCombiner;
 import io.github.freecoreeconomy.vault.BlessingSkinEconomy;
 import io.github.freecoreessentials.lang.Lang;
 import java.io.File;
@@ -74,6 +75,7 @@ public final class WealthHologramService implements Listener, AutoCloseable {
    public void start() {
       this.closed = false;
       this.load();
+      this.restoreLoadedChunks();
       this.refreshAll();
       this.scheduleRefresh();
    }
@@ -143,7 +145,7 @@ public final class WealthHologramService implements Listener, AutoCloseable {
             this.plugin.getLogger().warning("Could not refresh wealth holograms: " + failure.getMessage());
             return;
          }
-         this.leaderboard = this.filter(entries);
+         this.leaderboard = this.filter(WealthBalanceCombiner.combine(this.plugin, entries));
          this.holograms.values().forEach(this::render);
       }));
    }
@@ -173,12 +175,16 @@ public final class WealthHologramService implements Listener, AutoCloseable {
       for (String name : this.plugin.getConfig().getStringList("wealth-hologram.excluded-players")) {
          if (name != null && !name.isBlank()) excluded.add(name.toLowerCase(Locale.ROOT));
       }
+      Set<String> operators = new HashSet<>();
+      for (OfflinePlayer operator : Bukkit.getOperators()) {
+         String name = operator.getName();
+         if (name != null) operators.add(name.toLowerCase(Locale.ROOT));
+      }
 
       List<DatabaseGateway.LeaderboardEntry> result = new ArrayList<>();
       for (DatabaseGateway.LeaderboardEntry entry : candidates) {
-         if (excluded.contains(entry.playerName().toLowerCase(Locale.ROOT))) continue;
-         OfflinePlayer player = Bukkit.getOfflinePlayer(entry.playerName());
-         if (player.isOp()) continue;
+         String normalizedName = entry.playerName().toLowerCase(Locale.ROOT);
+         if (excluded.contains(normalizedName) || operators.contains(normalizedName)) continue;
          result.add(entry);
          if (result.size() >= this.topSize()) break;
       }
@@ -195,9 +201,10 @@ public final class WealthHologramService implements Listener, AutoCloseable {
          this.entities.put(hologram.id(), display.getUniqueId());
       }
       display.text(this.text());
-      display.setBillboard(Display.Billboard.FIXED);
+      display.setBillboard(Display.Billboard.CENTER);
       display.setSeeThrough(this.plugin.getConfig().getBoolean("wealth-hologram.see-through", false));
       display.setLineWidth(Math.clamp(this.plugin.getConfig().getInt("wealth-hologram.line-width", 512), 128, 4096));
+      display.setShadowed(false);
    }
 
    private Component text() {
@@ -251,7 +258,23 @@ public final class WealthHologramService implements Listener, AutoCloseable {
    private TextDisplay find(Hologram hologram) {
       UUID entityId = this.entities.get(hologram.id());
       Entity entity = entityId == null ? null : Bukkit.getEntity(entityId);
-      return this.isHologram(entity, hologram.id()) ? (TextDisplay)entity : null;
+      if (this.isHologram(entity, hologram.id())) return (TextDisplay)entity;
+      this.entities.remove(hologram.id(), entityId);
+
+      Location location = hologram.location();
+      World world = location.getWorld();
+      if (world == null || !world.isChunkLoaded(location.getBlockX() >> 4, location.getBlockZ() >> 4)) return null;
+      TextDisplay found = null;
+      for (Entity candidate : world.getChunkAt(location).getEntities()) {
+         if (!this.isHologram(candidate, hologram.id())) continue;
+         if (found == null) {
+            found = (TextDisplay)candidate;
+            this.entities.put(hologram.id(), candidate.getUniqueId());
+         } else {
+            candidate.remove();
+         }
+      }
+      return found;
    }
 
    private boolean isHologram(Entity entity, UUID hologramId) {
@@ -264,11 +287,11 @@ public final class WealthHologramService implements Listener, AutoCloseable {
       display.setPersistent(true);
       display.setInvulnerable(true);
       display.setGravity(false);
-      display.setBillboard(Display.Billboard.FIXED);
+      display.setBillboard(Display.Billboard.CENTER);
       display.setAlignment(TextDisplay.TextAlignment.CENTER);
       display.setLineWidth(Math.clamp(this.plugin.getConfig().getInt("wealth-hologram.line-width", 512), 128, 4096));
       display.setSeeThrough(this.plugin.getConfig().getBoolean("wealth-hologram.see-through", false));
-      display.setShadowed(true);
+      display.setShadowed(false);
       display.setDefaultBackground(false);
    }
 
@@ -280,8 +303,12 @@ public final class WealthHologramService implements Listener, AutoCloseable {
             Hologram hologram = rawId == null ? null : this.holograms.get(UUID.fromString(rawId));
             if (hologram == null) entity.remove();
             else {
-               this.entities.put(hologram.id(), entity.getUniqueId());
-               this.render(hologram);
+               UUID existingId = this.entities.putIfAbsent(hologram.id(), entity.getUniqueId());
+               Entity existing = existingId == null ? null : Bukkit.getEntity(existingId);
+               if (existingId != null && !existingId.equals(entity.getUniqueId())) {
+                  if (this.isHologram(existing, hologram.id())) entity.remove();
+                  else this.entities.put(hologram.id(), entity.getUniqueId());
+               }
             }
          } catch (IllegalArgumentException ignored) {
             entity.remove();
@@ -290,6 +317,14 @@ public final class WealthHologramService implements Listener, AutoCloseable {
       this.holograms.values().stream().filter(hologram -> hologram.worldId().equals(chunk.getWorld().getUID()))
          .filter(hologram -> (int)Math.floor(hologram.x()) >> 4 == chunk.getX() && (int)Math.floor(hologram.z()) >> 4 == chunk.getZ())
          .forEach(this::render);
+   }
+
+   private void restoreLoadedChunks() {
+      for (World world : Bukkit.getWorlds()) {
+         for (Chunk chunk : world.getLoadedChunks()) {
+            this.restoreChunk(chunk);
+         }
+      }
    }
 
    private void load() {

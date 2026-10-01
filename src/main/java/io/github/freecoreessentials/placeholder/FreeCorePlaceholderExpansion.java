@@ -85,7 +85,7 @@ public final class FreeCorePlaceholderExpansion extends PlaceholderExpansion imp
     * Returns title and player name in one legacy-formatted string so TAB keeps
     * the title's trailing color code when it renders the player name.
     */
-    private String tabName(Player player) {
+   private String tabName(Player player) {
       String prefix = rawFotiaPrefix2(player);
       if (prefix == null) {
          prefix = PlaceholderAPI.setPlaceholders(player, "%fotiatags_prefix2%");
@@ -95,8 +95,13 @@ public final class FreeCorePlaceholderExpansion extends PlaceholderExpansion imp
       }
       // FotiaTags' PAPI serializer drops a trailing color code when no text
       // follows it. Reading the raw prefix keeps that code for the player name.
-      return ChatColor.translateAlternateColorCodes('&', prefix) + player.getName();
-    }
+      return stripZeroWidth(ChatColor.translateAlternateColorCodes('&', prefix)) + stripZeroWidth(player.getName());
+   }
+
+   /** Hidden formatting markers from imported/custom tags must never reach TAB. */
+   private static String stripZeroWidth(String value) {
+      return value == null ? "" : value.replaceAll("[\\u200B-\\u200D\\uFEFF]", "");
+   }
 
    private String rawFotiaPrefix2(Player player) {
       Plugin fotiaTags = plugin.getServer().getPluginManager().getPlugin("FotiaTags");

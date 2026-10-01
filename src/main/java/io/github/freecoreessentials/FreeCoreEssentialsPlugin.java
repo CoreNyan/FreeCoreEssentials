@@ -2,6 +2,7 @@ package io.github.freecoreessentials;
 
 import io.github.freecoreeconomy.bedrock.BedrockAccountManager;
 import io.github.freecoreeconomy.command.EconomyCommands;
+import io.github.freecoreeconomy.command.BalanceTopCommand;
 import io.github.freecoreeconomy.database.DatabaseGateway;
 import io.github.freecoreeconomy.skin.SkinIntegration;
 import io.github.freecoreeconomy.vault.BlessingSkinEconomy;
@@ -11,14 +12,20 @@ import io.github.freecoreessentials.command.HomeCommand;
 import io.github.freecoreessentials.command.SpawnCommand;
 import io.github.freecoreessentials.command.WarpCommand;
 import io.github.freecoreessentials.command.MenuCommand;
+import io.github.freecoreessentials.command.RandomTeleportCommand;
 import io.github.freecoreessentials.display.WealthHologramService;
 import io.github.freecoreessentials.display.ScoreboardCompatibilityService;
 import io.github.freecoreessentials.crossserver.CrossServerCommandService;
 import io.github.freecoreessentials.crossserver.FotiaTagsSyncService;
+import io.github.freecoreessentials.crossserver.LastLocationService;
 import io.github.freecoreessentials.lang.Lang;
 import io.github.freecoreessentials.listener.GameModeFeedbackListener;
 import io.github.freecoreessentials.listener.LobbyBoundaryListener;
 import io.github.freecoreessentials.listener.JoinQuitMessageListener;
+import io.github.freecoreessentials.listener.AutoRespawnListener;
+import io.github.freecoreessentials.listener.FirstJoinSpawnListener;
+import io.github.freecoreessentials.listener.MenuShortcutListener;
+import io.github.freecoreessentials.listener.VanishSyncListener;
 import io.github.freecoreessentials.placeholder.FreeCorePlaceholderExpansion;
 import io.github.freecoreessentials.teleport.WarpService;
 import io.github.freecoreessentials.teleport.BackService;
@@ -44,6 +51,7 @@ public final class FreeCoreEssentialsPlugin extends JavaPlugin {
    private FreeCorePlaceholderExpansion placeholders;
    private ScoreboardCompatibilityService scoreboardCompatibility;
    private CrossServerCommandService crossServer;
+   private LastLocationService lastLocations;
    private FotiaTagsSyncService fotiaTagsSync;
 
    public void onEnable() {
@@ -57,6 +65,15 @@ public final class FreeCoreEssentialsPlugin extends JavaPlugin {
       this.getServer().getPluginManager().registerEvents(new GameModeFeedbackListener(this.lang), this);
       this.getServer().getPluginManager().registerEvents(new LobbyBoundaryListener(this, this.lang), this);
       this.getServer().getPluginManager().registerEvents(new JoinQuitMessageListener(this.lang), this);
+      this.getServer().getPluginManager().registerEvents(new AutoRespawnListener(this), this);
+      this.getServer().getPluginManager().registerEvents(new FirstJoinSpawnListener(this), this);
+       this.lastLocations = new LastLocationService(this);
+       this.getServer().getPluginManager().registerEvents(this.lastLocations, this);
+      this.getServer().getPluginManager().registerEvents(new MenuShortcutListener(this), this);
+      if (this.getServer().getPluginManager().isPluginEnabled("SimpleVanish")) {
+         this.getServer().getPluginManager().registerEvents(new VanishSyncListener(this), this);
+         this.getLogger().info("Enabled SimpleVanish state sync for proxy TAB.");
+      }
       this.getLogger().info("Initializing MySQL-backed Vault economy provider...");
 
       try {
@@ -88,6 +105,10 @@ public final class FreeCoreEssentialsPlugin extends JavaPlugin {
    }
 
    public void onDisable() {
+      if (this.lastLocations != null) {
+         this.lastLocations.close();
+         this.lastLocations = null;
+      }
       this.getServer().getServicesManager().unregisterAll(this);
       if (this.placeholders != null) {
          this.placeholders.close();
@@ -203,6 +224,11 @@ public final class FreeCoreEssentialsPlugin extends JavaPlugin {
          var6.setExecutor(var1);
          var6.setTabCompleter(var1);
       }
+
+      BalanceTopCommand balanceTop = new BalanceTopCommand(this, this.database, this.economy, this.lang);
+      PluginCommand balanceTopCommand = this.requireCommand("baltop");
+      balanceTopCommand.setExecutor(balanceTop);
+      balanceTopCommand.setTabCompleter(balanceTop);
    }
 
    private void registerMainCommand() {
@@ -252,6 +278,7 @@ public final class FreeCoreEssentialsPlugin extends JavaPlugin {
       this.requireCommand("home").setTabCompleter(homeCommand);
       this.requireCommand("sethome").setExecutor(setHomeCommand);
       this.requireCommand("sethome").setTabCompleter(setHomeCommand);
+      this.requireCommand("rtp").setExecutor(new RandomTeleportCommand(this, this.lang));
    }
 
    public boolean createWealthHologram(org.bukkit.Location location) {

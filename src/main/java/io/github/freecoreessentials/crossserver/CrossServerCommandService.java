@@ -4,6 +4,7 @@ import io.github.freecoreessentials.lang.Lang;
 
 import java.io.ByteArrayOutputStream;
 import java.io.ByteArrayInputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -24,6 +25,8 @@ import net.william278.husksync.api.BukkitHuskSyncAPI;
 import net.william278.husksync.user.User;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.GameMode;
+import org.bukkit.Location;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -35,6 +38,9 @@ import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.player.PlayerCommandPreprocessEvent;
 import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerChangedWorldEvent;
+import org.bukkit.event.player.PlayerGameModeChangeEvent;
+import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 import org.bukkit.event.player.PlayerItemHeldEvent;
@@ -49,7 +55,11 @@ import org.bukkit.util.io.BukkitObjectOutputStream;
 public final class CrossServerCommandService implements Listener, org.bukkit.command.CommandExecutor {
     private static final String CHANNEL = "fce:crossserver";
     private static final String TICKET_PREFIX = "fce:command:";
+    private static final String TPA_REQUEST_PREFIX = "fce:tpa:req:";
+    private static final String TPA_TARGET_PREFIX = "fce:tpa:target:";
+    private static final String TPA_TICKET_PREFIX = "fce:tpa:ticket:";
     private static final String INVSEE_STATE_PREFIX = "fce:invsee:state:";
+    private static final String GAMEMODE_PREFIX = "fce:gamemode:";
     private static final Set<String> PLAYER_COMMANDS = Set.of(
             "give", "tp", "teleport", "gamemode", "effect", "clear", "enchant", "experience", "xp",
             "attribute", "data", "item", "damage", "kill", "spectate", "ride", "title", "tell", "msg",
@@ -63,8 +73,16 @@ public final class CrossServerCommandService implements Listener, org.bukkit.com
     private final JavaPlugin plugin;
     private final Lang lang;
     private final Map<UUID, Session> sessions = new ConcurrentHashMap<>();
+    private final Map<UUID, TpaRequest> pendingTpa = new ConcurrentHashMap<>();
+    private final Map<UUID, GameMode> desiredGameModes = new ConcurrentHashMap<>();
+    private final Map<UUID, GameMode> requestedGameModes = new ConcurrentHashMap<>();
+    private final Map<UUID, Long> worldChangeNanos = new ConcurrentHashMap<>();
+    private final Set<UUID> applyingGameMode = ConcurrentHashMap.newKeySet();
     private volatile boolean running;
     private boolean applyingRemoteAdministration;
+
+    private record TpaRequest(String id, UUID requesterId, String requesterName, String requesterServer,
+                              UUID targetId, String targetName, String targetServer) {}
 
     public CrossServerCommandService(JavaPlugin plugin, Lang lang) {
         this.plugin = plugin;
@@ -94,10 +112,144 @@ public final class CrossServerCommandService implements Listener, org.bukkit.com
         Bukkit.getScheduler().runTaskLater(plugin, () -> refreshInventoryOnJoin(uuid), 100L);
         Bukkit.getScheduler().runTaskLater(plugin, () -> refreshInventoryOnJoin(uuid), 160L);
         Bukkit.getScheduler().runTaskLater(plugin, () -> refreshInventoryOnJoin(uuid), 220L);
+        Bukkit.getScheduler().runTaskLater(plugin, () -> restoreGameMode(event.getPlayer()), 20L);
+        Bukkit.getScheduler().runTaskLater(plugin, () -> restoreGameMode(event.getPlayer()), 60L);
+        Bukkit.getScheduler().runTaskLater(plugin, () -> restoreGameMode(event.getPlayer()), 120L);
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
             publishPresence(event.getPlayer());
             Bukkit.getScheduler().runTask(plugin, () -> pollQueuedCommand(event.getPlayer(), 0));
+            Bukkit.getScheduler().runTask(plugin, () -> pollTpaTicket(event.getPlayer(), 0));
         });
+    }
+
+    /** Re-applies the player's last selected mode after HuskSync/world plugins finish joining. */
+    private void restoreGameMode(Player player) {
+        if (!player.isOnline() || player.getGameMode() == GameMode.SPECTATOR) return;
+        UUID uuid = player.getUniqueId();
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            // Prefer the in-memory mode for same-backend world changes so a
+            // just-issued /gamemode command cannot be overwritten by a stale
+            // Redis read that is still waiting for its asynchronous SET.
+            GameMode mode = desiredGameModes.get(uuid);
+            if (mode == null) mode = parseGameMode(redis("GET", GAMEMODE_PREFIX + uuid));
+            if (mode == null) return;
+            GameMode selected = mode;
+            desiredGameModes.put(uuid, selected);
+            Bukkit.getScheduler().runTask(plugin, () -> applyGameMode(player, selected));
+        });
+    }
+
+    private void applyGameMode(Player player, GameMode mode) {
+        // Preserve an active spectator session only for delayed restore; explicit remote
+        // gamemode requests must still be able to leave spectator mode.
+        applyGameMode(player, mode, true);
+    }
+
+    private void applyGameMode(Player player, GameMode mode, boolean preserveSpectator) {
+        if (!player.isOnline() || (preserveSpectator && player.getGameMode() == GameMode.SPECTATOR)
+                || player.getGameMode() == mode) return;
+        UUID uuid = player.getUniqueId();
+        applyingGameMode.add(uuid);
+        try {
+            player.setGameMode(mode);
+        } finally {
+            applyingGameMode.remove(uuid);
+        }
+    }
+
+    private static GameMode parseGameMode(String value) {
+        if (value == null || value.isBlank()) return null;
+        try { return GameMode.valueOf(value.toUpperCase(Locale.ROOT)); }
+        catch (IllegalArgumentException ignored) { return null; }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onGameModeChange(PlayerGameModeChangeEvent event) {
+        Player player = event.getPlayer();
+        UUID uuid = player.getUniqueId();
+        if (applyingGameMode.remove(uuid)) return;
+        GameMode mode = event.getNewGameMode();
+        GameMode requested = requestedGameModes.remove(uuid);
+        GameMode desired = desiredGameModes.get(uuid);
+        if (requested == mode || desired == null) {
+            rememberGameMode(uuid, mode);
+            return;
+        }
+        if (recentlyChangedWorld(uuid)) {
+            Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                Player current = Bukkit.getPlayer(uuid);
+                if (current != null && current.isOnline()) applyGameMode(current, desired);
+            }, 1L);
+        } else if (desired != mode) {
+            // Changes outside a world-transition window are treated as an
+            // intentional console/admin change (for example /gamemode <mode>
+            // <player>) and become the new persistent mode.
+            rememberGameMode(uuid, mode);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onCrossWorldTeleport(PlayerTeleportEvent event) {
+        if (event.getFrom().getWorld() != null && event.getTo().getWorld() != null
+                && event.getFrom().getWorld() != event.getTo().getWorld()) {
+            worldChangeNanos.put(event.getPlayer().getUniqueId(), System.nanoTime());
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onWorldChange(PlayerChangedWorldEvent event) {
+        Player player = event.getPlayer();
+        worldChangeNanos.put(player.getUniqueId(), System.nanoTime());
+        // Some world/Multiverse handlers force SURVIVAL after this event. Run
+        // twice so the selected mode wins after both the world and sync hooks.
+        Bukkit.getScheduler().runTaskLater(plugin, () -> restoreGameMode(player), 2L);
+        Bukkit.getScheduler().runTaskLater(plugin, () -> restoreGameMode(player), 20L);
+    }
+
+    private boolean recentlyChangedWorld(UUID uuid) {
+        Long changed = worldChangeNanos.get(uuid);
+        return changed != null && System.nanoTime() - changed < 5_000_000_000L;
+    }
+
+    private void rememberGameMode(UUID uuid, GameMode mode) {
+        desiredGameModes.put(uuid, mode);
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            redis("SET", GAMEMODE_PREFIX + uuid, mode.name(), "EX", "604800");
+            publish(peerServer(), "MODE|" + uuid + "|" + mode.name());
+        });
+    }
+
+    private void rememberRequestedMode(Player player, GameMode mode) {
+        requestedGameModes.put(player.getUniqueId(), mode);
+        rememberGameMode(player.getUniqueId(), mode);
+    }
+
+    private static GameMode requestedMode(String[] parts, Player sender) {
+        if (parts.length < 2) return null;
+        String target = parts.length >= 3 ? parts[2] : sender.getName();
+        if (!target.equalsIgnoreCase(sender.getName()) && !target.equalsIgnoreCase("@s")) return null;
+        return switch (parts[1].toLowerCase(Locale.ROOT)) {
+            case "0", "survival", "s" -> GameMode.SURVIVAL;
+            case "1", "creative", "c" -> GameMode.CREATIVE;
+            case "2", "adventure", "a" -> GameMode.ADVENTURE;
+            case "3", "spectator", "sp" -> GameMode.SPECTATOR;
+            default -> null;
+        };
+    }
+
+    private static GameMode requestedModeForTarget(String[] parts, Player target) {
+        if (parts.length < 2) return null;
+        String value = parts[1].toLowerCase(Locale.ROOT);
+        if (parts.length < 3) return target.getGameMode();
+        String name = parts[2];
+        if (!name.equalsIgnoreCase(target.getName()) && !name.equalsIgnoreCase("@s")) return null;
+        return switch (value) {
+            case "0", "survival", "s" -> GameMode.SURVIVAL;
+            case "1", "creative", "c" -> GameMode.CREATIVE;
+            case "2", "adventure", "a" -> GameMode.ADVENTURE;
+            case "3", "spectator", "sp" -> GameMode.SPECTATOR;
+            default -> null;
+        };
     }
 
     private void pollQueuedCommand(Player player, int attempt) {
@@ -121,17 +273,32 @@ public final class CrossServerCommandService implements Listener, org.bukkit.com
 
     private void runQueuedCommand(Player player, String commandLine, int attempt) {
         if (!player.isOnline()) return;
+        boolean teleport = isTeleportCommand(commandLine);
         boolean targetReady = player.getWorld() != null && player.isValid() && commandTargetReady(commandLine);
-        if (!targetReady && attempt < 20) {
-            Bukkit.getScheduler().runTaskLater(plugin, () -> runQueuedCommand(player, commandLine, attempt + 1), 2L);
+        if (teleport && !targetReady) {
+            if (attempt < 100) {
+                Bukkit.getScheduler().runTaskLater(plugin, () -> runQueuedCommand(player, commandLine, attempt + 1), 2L);
+            } else {
+                plugin.getLogger().warning("Cross-server teleport target was not online after connect for "
+                        + player.getName() + ": /" + commandLine);
+                player.sendMessage(ChatColor.RED + "目标玩家尚未进入当前子服，位置传送失败，请重试。" );
+            }
             return;
         }
         if (executeDirectTeleport(player, commandLine)) return;
         if (!executeCommandWithResult(player, commandLine, success -> {
             if (success) sendSuccessfulFeedback(player, commandLine);
-        }) && attempt < 20) {
+        }) && attempt < (teleport ? 100 : 20)) {
             Bukkit.getScheduler().runTaskLater(plugin, () -> runQueuedCommand(player, commandLine, attempt + 1), 2L);
         }
+    }
+
+    private static boolean isTeleportCommand(String commandLine) {
+        String[] parts = commandLine.trim().split("\\s+");
+        if (parts.length == 0) return false;
+        String root = parts[0].toLowerCase(Locale.ROOT);
+        return root.equals("tp") || root.equals("teleport") || root.equals("minecraft:tp")
+                || root.equals("minecraft:teleport");
     }
 
     private boolean executeDirectTeleport(Player sender, String commandLine) {
@@ -141,9 +308,10 @@ public final class CrossServerCommandService implements Listener, org.bukkit.com
         if (!root.equals("tp") && !root.equals("teleport")) return false;
         Player target = Bukkit.getPlayerExact(parts[1]);
         if (target == null || !target.isOnline()) return false;
-        // The cross-server form supported by this bridge is /tp <player>.
-        // Teleport the entity directly after the connect; this avoids Bukkit's
-        // command dispatcher running before the proxy/backend handshake settles.
+        // Teleport directly after the cross-server connect.  Running the
+        // original command through Brigadier is racy during the backend join,
+        // and a command such as /tp target x y z otherwise targets the remote
+        // entity through a dispatcher that may not have finished indexing it.
         if (parts.length == 2) {
             boolean moved = sender.teleport(target.getLocation());
             plugin.getLogger().info("Cross-server direct teleport " + (moved ? "completed" : "failed")
@@ -152,7 +320,54 @@ public final class CrossServerCommandService implements Listener, org.bukkit.com
                     + this.lang.message("vanilla-command.teleport-completed", target.getName()));
             return moved;
         }
+        if (parts.length == 3) {
+            Player moved = Bukkit.getPlayerExact(parts[1]);
+            Player destination = Bukkit.getPlayerExact(parts[2]);
+            if (destination == null && (parts[2].equalsIgnoreCase("@s") || parts[2].equalsIgnoreCase("@p"))) {
+                destination = sender;
+            }
+            if (moved == null || destination == null || !moved.isOnline() || !destination.isOnline()) return false;
+            boolean teleported = moved.teleport(destination.getLocation());
+            plugin.getLogger().info("Cross-server direct target teleport " + (teleported ? "completed" : "failed")
+                    + " for " + moved.getName() + " to " + destination.getName());
+            if (teleported) sender.sendMessage(this.lang.message("prefix.freecoreessentials") + ChatColor.GREEN
+                    + this.lang.message("vanilla-command.teleport-completed", moved.getName()));
+            return teleported;
+        }
+        if (parts.length >= 5 && parts.length <= 7) {
+            Location base = sender.getLocation();
+            Double x = coordinate(parts[2], base.getX());
+            Double y = coordinate(parts[3], base.getY());
+            Double z = coordinate(parts[4], base.getZ());
+            if (x == null || y == null || z == null) return false;
+            float yaw = base.getYaw();
+            float pitch = base.getPitch();
+            try {
+                if (parts.length >= 6) yaw = Float.parseFloat(parts[5].startsWith("~")
+                        ? Float.toString((float) (yaw + relative(parts[5]))) : parts[5]);
+                if (parts.length == 7) pitch = Float.parseFloat(parts[6].startsWith("~")
+                        ? Float.toString((float) (pitch + relative(parts[6]))) : parts[6]);
+            } catch (NumberFormatException ignored) {
+                return false;
+            }
+            boolean moved = sender.teleport(new Location(base.getWorld(), x, y, z, yaw, pitch));
+            plugin.getLogger().info("Cross-server coordinate teleport " + (moved ? "completed" : "failed")
+                    + " for " + sender.getName() + " to " + x + " " + y + " " + z);
+            if (moved) sender.sendMessage(this.lang.message("prefix.freecoreessentials") + ChatColor.GREEN
+                    + this.lang.message("vanilla-command.teleport-completed", sender.getName()));
+            return moved;
+        }
         return false;
+    }
+
+    private static Double coordinate(String token, double base) {
+        try { return token.startsWith("~") ? base + relative(token) : Double.parseDouble(token); }
+        catch (NumberFormatException ignored) { return null; }
+    }
+
+    private static double relative(String token) {
+        String suffix = token.substring(1);
+        return suffix.isEmpty() ? 0.0D : Double.parseDouble(suffix);
     }
 
     private boolean commandTargetReady(String commandLine) {
@@ -165,6 +380,9 @@ public final class CrossServerCommandService implements Listener, org.bukkit.com
     }
 
     @EventHandler public void onQuit(PlayerQuitEvent event) {
+        pendingTpa.remove(event.getPlayer().getUniqueId());
+        requestedGameModes.remove(event.getPlayer().getUniqueId());
+        worldChangeNanos.remove(event.getPlayer().getUniqueId());
         redis("DEL", "fce:online:name:" + event.getPlayer().getName().toLowerCase());
         redis("DEL", "fce:online:name:" + event.getPlayer().getName().toLowerCase() + ":uuid");
         redis("DEL", "fce:online:uuid:" + event.getPlayer().getUniqueId());
@@ -177,6 +395,15 @@ public final class CrossServerCommandService implements Listener, org.bukkit.com
         String[] parts = raw.substring(1).split("\\s+");
         String root = parts[0].toLowerCase();
         if (root.startsWith("minecraft:")) root = root.substring("minecraft:".length());
+        if (root.equals("tpa") || root.equals("tpaccept") || root.equals("tpdeny")) {
+            event.setCancelled(true);
+            handleTpaCommand(event.getPlayer(), root, parts);
+            return;
+        }
+        if (root.equals("gamemode")) {
+            GameMode requested = requestedMode(parts, event.getPlayer());
+            if (requested != null) rememberRequestedMode(event.getPlayer(), requested);
+        }
         if (isAdministrationCommand(root)) {
             if (event.getPlayer().isOp() || event.getPlayer().hasPermission("minecraft.command.op")) {
                 event.setCancelled(true);
@@ -304,6 +531,15 @@ public final class CrossServerCommandService implements Listener, org.bukkit.com
                 sourceStack = handle.getClass().getMethod("createCommandSourceStack").invoke(handle);
             } else {
                 sourceStack = minecraftServer.getClass().getMethod("createCommandSourceStack").invoke(minecraftServer);
+            }
+            // Custom feedback is emitted by this service. Suppress vanilla command
+            // feedback while retaining the command source's permissions and identity.
+            try {
+                java.lang.reflect.Method silent = sourceStack.getClass().getMethod("withSuppressedOutput");
+                sourceStack = silent.invoke(sourceStack);
+            } catch (ReflectiveOperationException ignored) {
+                // Older Paper mappings may not expose withSuppressedOutput; execution
+                // still proceeds with the original source.
             }
             Class<?> callbackType = Class.forName("net.minecraft.commands.CommandResultCallback");
             Object callback = Proxy.newProxyInstance(callbackType.getClassLoader(), new Class<?>[]{callbackType},
@@ -705,26 +941,273 @@ public final class CrossServerCommandService implements Listener, org.bukkit.com
     }
 
     private void queueAndConnect(Player player, String targetServer, String command) {
-        redis("SET", TICKET_PREFIX + player.getUniqueId(), b64(command), "EX", "60");
-        try (ByteArrayOutputStream bytes = new ByteArrayOutputStream(); java.io.DataOutputStream out = new java.io.DataOutputStream(bytes)) {
+        String key = TICKET_PREFIX + player.getUniqueId();
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            if (redis("SET", key, b64(command), "EX", "120") == null) {
+                Bukkit.getScheduler().runTask(plugin, () -> player.sendMessage(this.lang.message("prefix.freecoreessentials")
+                        + ChatColor.RED + "跨服传送票据写入失败，请重试。"));
+                return;
+            }
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                try (ByteArrayOutputStream bytes = new ByteArrayOutputStream(); java.io.DataOutputStream out = new java.io.DataOutputStream(bytes)) {
+                    out.writeUTF("Connect"); out.writeUTF(targetServer); player.sendPluginMessage(plugin, "BungeeCord", bytes.toByteArray());
+                    player.sendMessage(this.lang.message("prefix.freecoreessentials") + ChatColor.GREEN
+                            + this.lang.message("vanilla-command.teleport-switching", targetServer));
+                } catch (IOException ex) {
+                    player.sendMessage(this.lang.message("prefix.freecoreessentials") + ChatColor.RED
+                            + this.lang.message("vanilla-command.teleport-switch-failed"));
+                }
+            });
+        });
+    }
+
+    private void handleTpaCommand(Player player, String root, String[] parts) {
+        if (!player.hasPermission("freecoreessentials.tpa")) {
+            player.sendMessage(this.lang.message("prefix.freecoreessentials") + ChatColor.RED + "你没有使用 TPA 的权限。");
+            return;
+        }
+        if (root.equals("tpa")) {
+            if (parts.length != 2 || parts[1].isBlank()) {
+                player.sendMessage(ChatColor.YELLOW + "用法: /tpa <玩家>");
+                return;
+            }
+            requestTeleport(player, parts[1]);
+            return;
+        }
+        if (parts.length > 2) {
+            player.sendMessage(ChatColor.YELLOW + "用法: /" + root + " [玩家]");
+            return;
+        }
+        respondToTeleportRequest(player, root.equals("tpaccept"), parts.length == 2 ? parts[1] : null);
+    }
+
+    private void requestTeleport(Player requester, String targetName) {
+        Player localTarget = Bukkit.getPlayerExact(targetName);
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            String targetServer = localTarget == null ? redis("GET", "fce:online:name:" + targetName.toLowerCase(Locale.ROOT)) : serverId();
+            String targetUuidValue = localTarget == null ? redis("GET", "fce:online:name:" + targetName.toLowerCase(Locale.ROOT) + ":uuid") : localTarget.getUniqueId().toString();
+            UUID targetId;
+            try { targetId = targetUuidValue == null ? null : UUID.fromString(targetUuidValue); }
+            catch (IllegalArgumentException ignored) { targetId = null; }
+            if (targetServer == null || targetId == null || !targetServer.equals("survival") && !targetServer.equals("technical")) {
+                Bukkit.getScheduler().runTask(plugin, () -> requester.sendMessage(ChatColor.RED + "玩家不在线，传送请求失败。"));
+                return;
+            }
+            if (targetId.equals(requester.getUniqueId())) {
+                Bukkit.getScheduler().runTask(plugin, () -> requester.sendMessage(ChatColor.RED + "不能向自己发送传送请求。"));
+                return;
+            }
+            String requestId = UUID.randomUUID().toString();
+            TpaRequest request = new TpaRequest(requestId, requester.getUniqueId(), requester.getName(), serverId(), targetId,
+                    targetName, targetServer);
+            String targetKey = TPA_TARGET_PREFIX + targetId;
+            if (redis("SET", targetKey, requestId, "NX", "EX", "60") == null
+                    || redis("SET", TPA_REQUEST_PREFIX + requestId, serializeTpa(request), "EX", "60") == null) {
+                redis("DEL", targetKey);
+                Bukkit.getScheduler().runTask(plugin, () -> requester.sendMessage(ChatColor.YELLOW + "该玩家已有待处理的传送请求。"));
+                return;
+            }
+            Bukkit.getScheduler().runTask(plugin, () -> requester.sendMessage(ChatColor.GREEN + "已向 " + targetName + " 发送传送请求，有效期 60 秒。"));
+            if (targetServer.equals(serverId())) {
+                Player target = Bukkit.getPlayer(targetId);
+                if (target == null || !target.isOnline()) {
+                    redis("DEL", targetKey, TPA_REQUEST_PREFIX + requestId);
+                    Bukkit.getScheduler().runTask(plugin, () -> requester.sendMessage(ChatColor.RED + "玩家不在线，传送请求失败。"));
+                    return;
+                }
+                pendingTpa.put(targetId, request);
+                notifyTpaTarget(target, request);
+            } else {
+                publish(targetServer, "TPA_REQUEST|" + requestId + "|" + targetId + "|" + request.requesterId
+                        + "|" + b64(request.requesterName) + "|" + request.requesterServer + "|" + b64(targetName));
+            }
+        });
+    }
+
+    private void notifyTpaTarget(Player target, TpaRequest request) {
+        target.sendMessage(ChatColor.YELLOW + "玩家 " + request.requesterName + " 请求传送到你这里。请输入 "
+                + ChatColor.WHITE + "/tpaccept " + request.requesterName + ChatColor.YELLOW + " 同意，或 "
+                + ChatColor.WHITE + "/tpdeny " + request.requesterName + ChatColor.YELLOW + " 拒绝（60秒内有效）。");
+    }
+
+    private void respondToTeleportRequest(Player target, boolean accepted, String requesterName) {
+        TpaRequest request = pendingTpa.get(target.getUniqueId());
+        if (request == null || (requesterName != null && !request.requesterName.equalsIgnoreCase(requesterName))) {
+            target.sendMessage(ChatColor.RED + "没有匹配的待处理传送请求。" );
+            return;
+        }
+        pendingTpa.remove(target.getUniqueId(), request);
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            if (redis("EXISTS", TPA_REQUEST_PREFIX + request.id) == null || "0".equals(redis("EXISTS", TPA_REQUEST_PREFIX + request.id))) {
+                redis("DEL", TPA_TARGET_PREFIX + target.getUniqueId());
+                Bukkit.getScheduler().runTask(plugin, () -> target.sendMessage(ChatColor.RED + "该传送请求已过期。"));
+                return;
+            }
+            redis("DEL", TPA_TARGET_PREFIX + target.getUniqueId(), TPA_REQUEST_PREFIX + request.id);
+            String requesterServer = redis("GET", "fce:online:uuid:" + request.requesterId);
+            if (requesterServer == null) {
+                Bukkit.getScheduler().runTask(plugin, () -> target.sendMessage(ChatColor.RED + "请求方已下线，传送失败。"));
+                return;
+            }
+            TpaRequest current = new TpaRequest(request.id, request.requesterId, request.requesterName, requesterServer,
+                    request.targetId, request.targetName, serverId());
+            String action = accepted ? "TPA_ACCEPT" : "TPA_DENY";
+            if (requesterServer.equals(serverId())) {
+                Bukkit.getScheduler().runTask(plugin, () -> {
+                    Player requester = Bukkit.getPlayer(current.requesterId);
+                    if (requester == null || !requester.isOnline()) {
+                        target.sendMessage(ChatColor.RED + "请求方已下线，传送失败。");
+                        return;
+                    }
+                    if (!accepted) {
+                        requester.sendMessage(ChatColor.YELLOW + target.getName() + " 拒绝了你的传送请求。" );
+                        target.sendMessage(ChatColor.GREEN + "已拒绝 " + requester.getName() + " 的传送请求。" );
+                        return;
+                    }
+                    target.sendMessage(ChatColor.GREEN + "已同意 " + requester.getName() + " 的传送请求。" );
+                    completeTpa(requester, current);
+                });
+            } else {
+                publish(requesterServer, action + "|" + current.id + "|" + current.requesterId + "|"
+                        + b64(current.requesterName) + "|" + current.targetId + "|" + b64(current.targetName) + "|" + current.targetServer);
+                Bukkit.getScheduler().runTask(plugin, () -> target.sendMessage(accepted
+                        ? ChatColor.GREEN + "已同意 " + current.requesterName + " 的传送请求。"
+                        : ChatColor.GREEN + "已拒绝 " + current.requesterName + " 的传送请求。"));
+            }
+        });
+    }
+
+    private String serializeTpa(TpaRequest request) {
+        return request.requesterId + "|" + b64(request.requesterName) + "|" + request.requesterServer + "|"
+                + request.targetId + "|" + b64(request.targetName) + "|" + request.targetServer;
+    }
+
+    private void handleRemoteTpa(String[] payload) {
+        if (payload[1].equals("TPA_REQUEST") && payload.length >= 8) {
+            try {
+                String requestId = payload[2];
+                UUID targetId = UUID.fromString(payload[3]);
+                UUID requesterId = UUID.fromString(payload[4]);
+                Player target = Bukkit.getPlayer(targetId);
+                if (target == null || !target.isOnline()) return;
+                TpaRequest request = new TpaRequest(requestId, requesterId, decode(payload[5]), payload[6], targetId,
+                        decode(payload[7]), serverId());
+                pendingTpa.put(targetId, request);
+                notifyTpaTarget(target, request);
+            } catch (IllegalArgumentException ignored) { }
+            return;
+        }
+        if (payload.length < 8 || (!payload[1].equals("TPA_ACCEPT") && !payload[1].equals("TPA_DENY"))) return;
+        try {
+            String requestId = payload[2];
+            UUID requesterId = UUID.fromString(payload[3]);
+            UUID targetId = UUID.fromString(payload[5]);
+            TpaRequest request = new TpaRequest(requestId, requesterId, decode(payload[4]), serverId(), targetId,
+                    decode(payload[6]), payload[7]);
+            Player requester = Bukkit.getPlayer(requesterId);
+            if (requester == null || !requester.isOnline()) return;
+            if (payload[1].equals("TPA_DENY")) {
+                requester.sendMessage(ChatColor.YELLOW + request.targetName + " 拒绝了你的传送请求。" );
+                return;
+            }
+            completeTpa(requester, request);
+        } catch (IllegalArgumentException ignored) { }
+    }
+
+    private void completeTpa(Player requester, TpaRequest request) {
+        if (!request.targetServer.equals(serverId())) {
+            String ticketKey = TPA_TICKET_PREFIX + requester.getUniqueId();
+            String ticket = request.targetId + "|" + b64(request.targetName) + "|" + request.targetServer + "|" + request.id;
+            Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+                if (redis("SET", ticketKey, ticket, "EX", "120") == null) {
+                    Bukkit.getScheduler().runTask(plugin, () -> requester.sendMessage(ChatColor.RED + "跨服传送票据写入失败，请重试。"));
+                    return;
+                }
+                Bukkit.getScheduler().runTask(plugin, () -> {
+                    connectForTpa(requester, request.targetServer);
+                    requester.sendMessage(ChatColor.GREEN + "对方已同意，正在前往 " + request.targetServer + "。" );
+                });
+            });
+            return;
+        }
+        Player target = Bukkit.getPlayer(request.targetId);
+        if (target == null || !target.isOnline()) {
+            requester.sendMessage(ChatColor.RED + "目标玩家已下线，传送失败。" );
+            return;
+        }
+        if (requester.teleport(target.getLocation())) {
+            requester.sendMessage(ChatColor.GREEN + "已传送到 " + target.getName() + " 身边。" );
+        } else {
+            requester.sendMessage(ChatColor.RED + "传送失败。" );
+        }
+    }
+
+    private void connectForTpa(Player player, String targetServer) {
+        try (ByteArrayOutputStream bytes = new ByteArrayOutputStream(); DataOutputStream out = new DataOutputStream(bytes)) {
             out.writeUTF("Connect"); out.writeUTF(targetServer); player.sendPluginMessage(plugin, "BungeeCord", bytes.toByteArray());
-            player.sendMessage(this.lang.message("prefix.freecoreessentials") + ChatColor.GREEN
-                    + this.lang.message("vanilla-command.teleport-switching", targetServer));
-        } catch (IOException ex) {
-            player.sendMessage(this.lang.message("prefix.freecoreessentials") + ChatColor.RED
-                    + this.lang.message("vanilla-command.teleport-switch-failed"));
+        } catch (IOException exception) {
+            player.sendMessage(ChatColor.RED + "无法切换到目标子服，传送失败。" );
+        }
+    }
+
+    private void pollTpaTicket(Player player, int attempt) {
+        if (!player.isOnline()) return;
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            String key = TPA_TICKET_PREFIX + player.getUniqueId();
+            String ticket = redis("GET", key);
+            if (ticket == null) {
+                if (attempt < 80) Bukkit.getScheduler().runTaskLater(plugin, () -> pollTpaTicket(player, attempt + 1), 5L);
+                return;
+            }
+            redis("DEL", key);
+            Bukkit.getScheduler().runTask(plugin, () -> completeTpaAfterJoin(player, ticket, 0));
+        });
+    }
+
+    private void completeTpaAfterJoin(Player requester, String ticket, int attempt) {
+        if (!requester.isOnline()) return;
+        String[] fields = ticket.split("\\|", 4);
+        if (fields.length < 3) return;
+        try {
+            UUID targetId = UUID.fromString(fields[0]);
+            Player target = Bukkit.getPlayer(targetId);
+            if (target == null || !target.isOnline()) {
+                if (attempt < 120) {
+                    Bukkit.getScheduler().runTaskLater(plugin, () -> completeTpaAfterJoin(requester, ticket, attempt + 1), 5L);
+                } else {
+                    plugin.getLogger().warning("Cross-server TPA target was not online after connect for "
+                            + requester.getName() + ": " + fields[1]);
+                    requester.sendMessage(ChatColor.RED + "目标玩家尚未进入当前子服，位置传送失败，请重试。" );
+                }
+                return;
+            }
+            boolean moved = requester.teleport(target.getLocation());
+            plugin.getLogger().info("Cross-server TPA location teleport " + (moved ? "completed" : "failed")
+                    + " for " + requester.getName() + " to " + target.getName());
+            if (moved) requester.sendMessage(ChatColor.GREEN + "已传送到 " + target.getName() + " 身边。" );
+            else requester.sendMessage(ChatColor.RED + "传送失败。" );
+        } catch (IllegalArgumentException ignored) {
+            requester.sendMessage(ChatColor.RED + "传送票据无效，传送失败。" );
         }
     }
 
     private void handle(String message) {
-        String[] p = message.split("\\|", 6);
+        String[] p = message.split("\\|", 12);
         if (p.length < 2 || !serverId().equals(p[0])) return;
+        if (p[1].startsWith("TPA_")) {
+            Bukkit.getScheduler().runTask(plugin, () -> handleRemoteTpa(p));
+            return;
+        }
         if (p[1].equals("CMD") && p.length >= 3) {
             Bukkit.getScheduler().runTask(plugin, () -> handleRemoteCommand(p));
             return;
         }
         if (p[1].equals("RESULT") && p.length >= 5) {
             handleCommandResult(p);
+            return;
+        }
+        if (p[1].equals("MODE") && p.length >= 4) {
+            handleRemoteGameMode(p);
             return;
         }
         if (p[1].equals("ADMIN") && p.length >= 3) Bukkit.getScheduler().runTask(plugin, () -> {
@@ -758,11 +1241,49 @@ public final class CrossServerCommandService implements Listener, org.bukkit.com
         try { command = decode(payload[2]); } catch (IllegalArgumentException ignored) { return; }
         if (payload.length < 4 || payload[3].isBlank()) return;
         String sender = payload[3];
-        if (!executeCommandWithResult(Bukkit.getConsoleSender(), command,
-                executed -> publish(peerServer(), "RESULT|" + b64(sender) + "|"
-                        + (executed ? "1" : "0") + "|" + b64(command)))) {
+        String[] parts = command.trim().split("\\s+");
+        if (parts.length > 0 && parts[0].equalsIgnoreCase("gamemode")) {
+            Player target = parts.length >= 3 ? Bukkit.getPlayerExact(parts[2]) : null;
+            if (target != null) {
+                GameMode requested = requestedModeForTarget(parts, target);
+                if (requested != null) requestedGameModes.put(target.getUniqueId(), requested);
+            }
+        }
+        Consumer<Boolean> result = executed -> publish(peerServer(), "RESULT|" + b64(sender) + "|"
+                + (executed ? "1" : "0") + "|" + b64(command));
+        if (executeDirectRemoteCommand(command, result)) return;
+        if (!executeCommandWithResult(Bukkit.getConsoleSender(), command, result)) {
             publish(peerServer(), "RESULT|" + b64(sender) + "|0|" + b64(command));
         }
+    }
+
+    /** Directly handles /kill <exact player> on the backend that owns the entity. */
+    private boolean executeDirectRemoteCommand(String command, Consumer<Boolean> result) {
+        String[] parts = command.trim().split("\\s+");
+        if (parts.length < 2) return false;
+        String root = parts[0].toLowerCase(Locale.ROOT);
+        if (root.startsWith("minecraft:")) root = root.substring("minecraft:".length());
+        if (!root.equals("kill") || parts[1].startsWith("@")) return false;
+        Player target = Bukkit.getPlayerExact(parts[1]);
+        if (target == null || !target.isOnline()) return false;
+        boolean killed = false;
+        try {
+            target.setHealth(0.0D);
+            killed = target.isDead() || !target.isOnline() || target.getHealth() <= 0.0D;
+        } catch (IllegalArgumentException | IllegalStateException ignored) { }
+        result.accept(killed);
+        return true;
+    }
+
+    private void handleRemoteGameMode(String[] payload) {
+        UUID uuid;
+        try { uuid = UUID.fromString(payload[2]); }
+        catch (IllegalArgumentException ignored) { return; }
+        GameMode mode = parseGameMode(payload[3]);
+        if (mode == null) return;
+        desiredGameModes.put(uuid, mode);
+        Player player = Bukkit.getPlayer(uuid);
+        if (player != null && player.isOnline()) applyGameMode(player, mode, false);
     }
 
     private void handleCommandResult(String[] payload) {
