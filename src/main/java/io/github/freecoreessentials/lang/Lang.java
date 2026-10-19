@@ -63,6 +63,17 @@ public final class Lang {
          value = value.replace("{" + index + "}", String.valueOf(arguments[index]));
       }
 
+      // Also support named placeholders commonly written in config/lang files:
+      // {receiver}/{target} -> arguments[0], {sender} -> arguments[0], {message} -> arguments[last]
+      if (arguments.length > 0) {
+         String arg0 = String.valueOf(arguments[0]);
+         String argLast = String.valueOf(arguments[arguments.length - 1]);
+         value = value.replace("{receiver}", arg0)
+                      .replace("{target}", arg0)
+                      .replace("{sender}", arg0)
+                      .replace("{message}", argLast);
+      }
+
       return ChatColor.translateAlternateColorCodes('&', value);
    }
 }

@@ -94,7 +94,11 @@ public final class BlessingSkinEconomy implements Economy {
       }
 
       try {
-         return this.database.hasAccount(this.resolveAccountName(var1));
+         String var2 = this.resolveAccountName(var1);
+         if (this.database.hasAccount(var2)) {
+            return true;
+         }
+         return this.database.createAccount(var2);
       } catch (DatabaseException var3) {
          this.warn(var3);
          return false;
@@ -205,7 +209,14 @@ public final class BlessingSkinEconomy implements Economy {
             return this.database
                .getBalance(var7)
                .map(var0 -> new EconomyResponse(0.0, var0.doubleValue(), ResponseType.SUCCESS, null))
-               .orElseGet(() -> this.failure(0.0, 0.0, "No Blessing Skin account matches player_name=" + var7));
+               .orElseGet(() -> {
+                  try {
+                     this.database.createAccount(var7);
+                     return new EconomyResponse(0.0, 0.0, ResponseType.SUCCESS, null);
+                  } catch (DatabaseException varEx) {
+                     return this.failure(0.0, 0.0, "No Blessing Skin account matches player_name=" + var7);
+                  }
+               });
          }
 
          TransactionOutcome var8 = var4 ? this.database.deposit(var7, var6) : this.database.withdraw(var7, var6);
@@ -413,18 +424,26 @@ public final class BlessingSkinEconomy implements Economy {
    }
 
    public boolean createPlayerAccount(String var1) {
-      return this.hasAccount(var1);
+      if (!validPlayerName(var1)) {
+         return false;
+      }
+      try {
+         return this.database.createAccount(this.resolveAccountName(var1));
+      } catch (DatabaseException var3) {
+         this.warn(var3);
+         return false;
+      }
    }
 
    public boolean createPlayerAccount(OfflinePlayer var1) {
-      return this.hasAccount(var1);
+      return this.createPlayerAccount(nameOf(var1));
    }
 
    public boolean createPlayerAccount(String var1, String var2) {
-      return this.hasAccount(var1);
+      return this.createPlayerAccount(var1);
    }
 
    public boolean createPlayerAccount(OfflinePlayer var1, String var2) {
-      return this.hasAccount(var1);
+      return this.createPlayerAccount(nameOf(var1));
    }
 }

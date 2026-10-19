@@ -5,8 +5,6 @@ import java.util.List;
 import java.util.Set;
 import com.sirsnaryo.donutscoreboard.API.Events.DonutScoreboardBuildEvent;
 import com.sirsnaryo.donutscoreboard.API.Events.DonutScoreboardRefreshEvent;
-import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.entity.Player;
@@ -22,7 +20,6 @@ import org.geysermc.floodgate.api.FloodgateApi;
 /** Keeps FotiaTags nametag teams visible on DonutScoreboard's per-player boards. */
 public final class ScoreboardCompatibilityService implements Listener, AutoCloseable {
    private static final String FOTIA_TEAM_PREFIX = "ft_";
-   private static final LegacyComponentSerializer LEGACY = LegacyComponentSerializer.legacySection();
    private final JavaPlugin plugin;
    private BukkitTask task;
 
@@ -40,7 +37,10 @@ public final class ScoreboardCompatibilityService implements Listener, AutoClose
       if (main == null) return;
       Set<String> fotiaTeams = new HashSet<>();
       for (Team team : main.getTeams()) {
-         if (team.getName().startsWith(FOTIA_TEAM_PREFIX)) fotiaTeams.add(team.getName());
+         if (team.getName().startsWith(FOTIA_TEAM_PREFIX)) {
+            applyPlayerNameColor(team);
+            fotiaTeams.add(team.getName());
+         }
       }
       for (Player viewer : Bukkit.getOnlinePlayers()) {
          Scoreboard board = viewer.getScoreboard();
@@ -58,8 +58,9 @@ public final class ScoreboardCompatibilityService implements Listener, AutoClose
          if (source == null) continue;
          Team target = board.getTeam(name);
          if (target == null) target = board.registerNewTeam(name);
-         target.prefix(prefixWithTrailingColor(source));
+         target.prefix(source.prefix());
          target.suffix(source.suffix());
+         target.setColor(source.getColor());
          target.setOption(Team.Option.NAME_TAG_VISIBILITY, source.getOption(Team.Option.NAME_TAG_VISIBILITY));
          for (String entry : source.getEntries()) {
             if (!target.hasEntry(entry)) target.addEntry(entry);
@@ -67,18 +68,13 @@ public final class ScoreboardCompatibilityService implements Listener, AutoClose
       }
    }
 
-   private Component prefixWithTrailingColor(Team source) {
-      Component prefix = source.prefix();
+   private void applyPlayerNameColor(Team source) {
       String entry = source.getEntries().stream().findFirst().orElse(null);
       Player player = entry == null ? null : Bukkit.getPlayerExact(entry);
       String raw = player == null ? null : rawFotiaPrefix2(player);
-      if (raw == null || raw.isBlank()) return prefix;
+      if (raw == null || raw.isBlank()) return;
       ChatColor color = trailingColor(raw);
-      if (color == null) return prefix;
-      // A zero-width character gives the trailing color a real component to
-      // attach to, so the following Team entry inherits it as the name color.
-      String legacy = LEGACY.serialize(prefix) + color.toString() + "\u200B";
-      return LEGACY.deserialize(legacy);
+      if (color != null) source.setColor(color);
    }
 
    private ChatColor trailingColor(String raw) {

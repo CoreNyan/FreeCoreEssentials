@@ -24,7 +24,7 @@ import org.bukkit.plugin.java.JavaPlugin;
 public final class AdministrationSyncService implements Listener {
     private static final String CHANNEL = "fce:crossserver";
     private static final Set<String> ADMIN_COMMANDS = Set.of(
-            "op", "deop", "ban", "pardon", "ban-ip", "pardon-ip");
+            "op", "deop", "ban", "pardon", "ban-ip", "pardon-ip", "gamerule", "difficulty", "weather", "time", "defaultgamemode", "whitelist");
     private final JavaPlugin plugin;
     private volatile boolean running;
     private Thread listener;
@@ -74,8 +74,25 @@ public final class AdministrationSyncService implements Listener {
         if (!isAdminCommand(command)) return;
         Bukkit.getScheduler().runTask(plugin, () -> {
             applyingRemote.set(true);
-            try { Bukkit.dispatchCommand(Bukkit.getConsoleSender(), command); }
-            finally { applyingRemote.set(false); }
+            try {
+                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), command);
+                // Extra notify for op / deop target if online locally
+                String[] cmdParts = command.trim().split("\\s+");
+                String root = cmdParts[0].toLowerCase(java.util.Locale.ROOT);
+                if (root.startsWith("minecraft:")) root = root.substring("minecraft:".length());
+                if (cmdParts.length > 1) {
+                    Player targetPlayer = Bukkit.getPlayerExact(cmdParts[1]);
+                    if (targetPlayer != null && targetPlayer.isOnline()) {
+                        if (root.equals("op")) {
+                            targetPlayer.sendMessage(org.bukkit.ChatColor.YELLOW + "你已获得管理员 (OP) 权限。");
+                        } else if (root.equals("deop")) {
+                            targetPlayer.sendMessage(org.bukkit.ChatColor.YELLOW + "你的管理员 (OP) 权限已被收回。");
+                        }
+                    }
+                }
+            } finally {
+                applyingRemote.set(false);
+            }
         });
     }
 

@@ -14,6 +14,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
@@ -600,6 +601,74 @@ public final class DatabaseGateway implements AutoCloseable {
       });
    }
 
+   public boolean createAccount(String var1) throws DatabaseException {
+      if (var1 == null || var1.isBlank()) {
+         return false;
+      }
+      return this.execute(() -> this.inTransaction(var2 -> this.ensureAccountExists(var2, var1)));
+   }
+
+   private boolean ensureAccountExists(Connection var1, String var2) throws SQLException {
+      if (var2 == null || var2.isBlank()) {
+         return false;
+      }
+      try (PreparedStatement var3 = var1.prepareStatement(this.statements().selectAccount())) {
+         var3.setQueryTimeout(this.queryTimeoutSeconds);
+         var3.setString(1, var2);
+         try (ResultSet var4 = var3.executeQuery()) {
+            if (var4.next()) {
+               return true;
+            }
+         }
+      }
+
+      String var5 = var2.trim();
+      String var6 = var5.toLowerCase(Locale.ROOT) + "@freecore.local";
+      String var7 = placeholderPassword();
+
+      if (MODERN_BLESSING_SKIN.equals(this.statements) || LEGACY_BLESSING_SKIN.equals(this.statements)) {
+         String var8 = MODERN_BLESSING_SKIN.equals(this.statements) ? "name" : "player_name";
+         long var9;
+         try (PreparedStatement var11 = var1.prepareStatement(
+               "INSERT INTO `users` (`email`, `nickname`, `score`, `password`, `ip`, `last_sign_at`, `register_at`) VALUES (?, ?, 0, ?, '0.0.0.0', NOW(), NOW())",
+               1
+            )) {
+            var11.setQueryTimeout(this.queryTimeoutSeconds);
+            var11.setString(1, var6);
+            var11.setString(2, var5);
+            var11.setString(3, var7);
+            if (var11.executeUpdate() != 1) {
+               return false;
+            }
+            try (ResultSet var12 = var11.getGeneratedKeys()) {
+               if (!var12.next()) {
+                  return false;
+               }
+               var9 = var12.getLong(1);
+            }
+         }
+
+         try (PreparedStatement var13 = var1.prepareStatement(
+               "INSERT INTO `players` (`uid`, " + quoted(var8) + ", `last_modified`) VALUES (?, ?, NOW())"
+            )) {
+            var13.setQueryTimeout(this.queryTimeoutSeconds);
+            var13.setLong(1, var9);
+            var13.setString(2, var5);
+            return var13.executeUpdate() == 1;
+         }
+      } else {
+         try (PreparedStatement var14 = var1.prepareStatement(
+               "INSERT INTO `users` (`player_name`, `email`, `password`, `score`) VALUES (?, ?, ?, 0)"
+            )) {
+            var14.setQueryTimeout(this.queryTimeoutSeconds);
+            var14.setString(1, var5);
+            var14.setString(2, var6);
+            var14.setString(3, var7);
+            return var14.executeUpdate() == 1;
+         }
+      }
+   }
+
    public boolean hasAccount(String var1) throws DatabaseException {
       DatabaseGateway.SqlStatements var2 = this.statements();
       return this.execute(() -> {
@@ -620,6 +689,7 @@ public final class DatabaseGateway implements AutoCloseable {
    public TransactionOutcome deposit(String var1, BigDecimal var2) throws DatabaseException {
       DatabaseGateway.SqlStatements var3 = this.statements();
       return this.execute(() -> this.inTransaction(var4 -> {
+         this.ensureAccountExists(var4, var1);
          try (PreparedStatement var5 = var4.prepareStatement(var3.deposit())) {
             var5.setQueryTimeout(this.queryTimeoutSeconds);
             var5.setBigDecimal(1, var2);

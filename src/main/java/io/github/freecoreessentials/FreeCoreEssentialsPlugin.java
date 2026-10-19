@@ -2,6 +2,7 @@ package io.github.freecoreessentials;
 
 import io.github.freecoreeconomy.bedrock.BedrockAccountManager;
 import io.github.freecoreeconomy.command.EconomyCommands;
+import io.github.freecoreeconomy.command.BalanceTopCommand;
 import io.github.freecoreeconomy.database.DatabaseGateway;
 import io.github.freecoreeconomy.skin.SkinIntegration;
 import io.github.freecoreeconomy.vault.BlessingSkinEconomy;
@@ -11,14 +12,22 @@ import io.github.freecoreessentials.command.HomeCommand;
 import io.github.freecoreessentials.command.SpawnCommand;
 import io.github.freecoreessentials.command.WarpCommand;
 import io.github.freecoreessentials.command.MenuCommand;
+import io.github.freecoreessentials.command.RandomTeleportCommand;
 import io.github.freecoreessentials.display.WealthHologramService;
 import io.github.freecoreessentials.display.ScoreboardCompatibilityService;
 import io.github.freecoreessentials.crossserver.CrossServerCommandService;
 import io.github.freecoreessentials.crossserver.FotiaTagsSyncService;
+import io.github.freecoreessentials.crossserver.LastLocationService;
 import io.github.freecoreessentials.lang.Lang;
 import io.github.freecoreessentials.listener.GameModeFeedbackListener;
 import io.github.freecoreessentials.listener.LobbyBoundaryListener;
 import io.github.freecoreessentials.listener.JoinQuitMessageListener;
+import io.github.freecoreessentials.listener.AutoRespawnListener;
+import io.github.freecoreessentials.listener.FirstJoinSpawnListener;
+import io.github.freecoreessentials.listener.MenuShortcutListener;
+import io.github.freecoreessentials.listener.VanishSyncListener;
+import io.github.freecoreessentials.listener.ColorFormattingListener;
+import io.github.freecoreessentials.service.PlayerHistoryService;
 import io.github.freecoreessentials.placeholder.FreeCorePlaceholderExpansion;
 import io.github.freecoreessentials.teleport.WarpService;
 import io.github.freecoreessentials.teleport.BackService;
@@ -44,6 +53,7 @@ public final class FreeCoreEssentialsPlugin extends JavaPlugin {
    private FreeCorePlaceholderExpansion placeholders;
    private ScoreboardCompatibilityService scoreboardCompatibility;
    private CrossServerCommandService crossServer;
+   private LastLocationService lastLocations;
    private FotiaTagsSyncService fotiaTagsSync;
 
    public void onEnable() {
@@ -57,6 +67,15 @@ public final class FreeCoreEssentialsPlugin extends JavaPlugin {
       this.getServer().getPluginManager().registerEvents(new GameModeFeedbackListener(this.lang), this);
       this.getServer().getPluginManager().registerEvents(new LobbyBoundaryListener(this, this.lang), this);
       this.getServer().getPluginManager().registerEvents(new JoinQuitMessageListener(this.lang), this);
+      this.getServer().getPluginManager().registerEvents(new AutoRespawnListener(this), this);
+      this.getServer().getPluginManager().registerEvents(new FirstJoinSpawnListener(this), this);
+       this.lastLocations = new LastLocationService(this);
+       this.getServer().getPluginManager().registerEvents(this.lastLocations, this);
+      this.getServer().getPluginManager().registerEvents(new MenuShortcutListener(this), this);
+      if (this.getServer().getPluginManager().isPluginEnabled("SimpleVanish")) {
+         this.getServer().getPluginManager().registerEvents(new VanishSyncListener(this), this);
+         this.getLogger().info("Enabled SimpleVanish state sync for proxy TAB.");
+      }
       this.getLogger().info("Initializing MySQL-backed Vault economy provider...");
 
       try {
@@ -88,6 +107,10 @@ public final class FreeCoreEssentialsPlugin extends JavaPlugin {
    }
 
    public void onDisable() {
+      if (this.lastLocations != null) {
+         this.lastLocations.close();
+         this.lastLocations = null;
+      }
       this.getServer().getServicesManager().unregisterAll(this);
       if (this.placeholders != null) {
          this.placeholders.close();
@@ -203,6 +226,11 @@ public final class FreeCoreEssentialsPlugin extends JavaPlugin {
          var6.setExecutor(var1);
          var6.setTabCompleter(var1);
       }
+
+      BalanceTopCommand balanceTop = new BalanceTopCommand(this, this.database, this.economy, this.lang);
+      PluginCommand balanceTopCommand = this.requireCommand("baltop");
+      balanceTopCommand.setExecutor(balanceTop);
+      balanceTopCommand.setTabCompleter(balanceTop);
    }
 
    private void registerMainCommand() {
@@ -223,9 +251,72 @@ public final class FreeCoreEssentialsPlugin extends JavaPlugin {
       this.getServer().getPluginManager().registerEvents(this.crossServer, this);
       this.requireCommand("invsee").setExecutor(this.crossServer);
       this.crossServer.start();
+
+      // Register PlayerHistoryService for /seen and /ip
+      PlayerHistoryService historyService = new PlayerHistoryService(this);
+      this.getServer().getPluginManager().registerEvents(historyService, this);
+      PluginCommand seenCmd = this.getCommand("seen");
+      if (seenCmd != null) {
+         seenCmd.setExecutor(historyService);
+         seenCmd.setTabCompleter(historyService);
+      }
+      PluginCommand ipCmd = this.getCommand("ip");
+      if (ipCmd != null) {
+         ipCmd.setExecutor(historyService);
+         ipCmd.setTabCompleter(historyService);
+      }
+
+      // Register ColorFormattingListener for chat and signs (with mute check)
+      this.getServer().getPluginManager().registerEvents(new ColorFormattingListener(this.crossServer, this.lang), this);
+
+      // Register new CMI-equivalent commands
+      io.github.freecoreessentials.command.SudoCommand sudoCmd = new io.github.freecoreessentials.command.SudoCommand(this.crossServer, this.lang);
+      this.requireCommand("sudo").setExecutor(sudoCmd);
+      this.requireCommand("sudo").setTabCompleter(sudoCmd);
+
+      io.github.freecoreessentials.command.MaintenanceCommand maintCmd = new io.github.freecoreessentials.command.MaintenanceCommand(this.crossServer, this.lang);
+      this.requireCommand("maintenance").setExecutor(maintCmd);
+      this.requireCommand("maintenance").setTabCompleter(maintCmd);
+
+      io.github.freecoreessentials.command.GmCommand gmCmd = new io.github.freecoreessentials.command.GmCommand(this.crossServer, this.lang);
+      this.requireCommand("gm").setExecutor(gmCmd);
+      this.requireCommand("gm").setTabCompleter(gmCmd);
+
+      io.github.freecoreessentials.command.SpeedCommand flySpeedCmd = new io.github.freecoreessentials.command.SpeedCommand(this.lang, true);
+      this.requireCommand("flyspeed").setExecutor(flySpeedCmd);
+      this.requireCommand("flyspeed").setTabCompleter(flySpeedCmd);
+
+      io.github.freecoreessentials.command.SpeedCommand walkSpeedCmd = new io.github.freecoreessentials.command.SpeedCommand(this.lang, false);
+      this.requireCommand("walkspeed").setExecutor(walkSpeedCmd);
+      this.requireCommand("walkspeed").setTabCompleter(walkSpeedCmd);
+
+      io.github.freecoreessentials.command.SayCommand sayCmd = new io.github.freecoreessentials.command.SayCommand(this.crossServer, this.lang);
+      this.requireCommand("say").setExecutor(sayCmd);
+      this.requireCommand("say").setTabCompleter(sayCmd);
+
+      io.github.freecoreessentials.command.PingCommand pingCmd = new io.github.freecoreessentials.command.PingCommand(this.crossServer, this.lang);
+      this.requireCommand("ping").setExecutor(pingCmd);
+      this.requireCommand("ping").setTabCompleter(pingCmd);
+
+      io.github.freecoreessentials.command.NickCommand nickCmd = new io.github.freecoreessentials.command.NickCommand(this.crossServer, this.lang);
+      this.requireCommand("nick").setExecutor(nickCmd);
+      this.requireCommand("nick").setTabCompleter(nickCmd);
+
+      io.github.freecoreessentials.command.MsgCommand msgCmd = new io.github.freecoreessentials.command.MsgCommand(this.crossServer, this.lang);
+      this.requireCommand("msg").setExecutor(msgCmd);
+      this.requireCommand("msg").setTabCompleter(msgCmd);
+
+      io.github.freecoreessentials.command.MuteCommand muteCmd = new io.github.freecoreessentials.command.MuteCommand(this.crossServer, this.lang, false);
+      this.requireCommand("mute").setExecutor(muteCmd);
+      this.requireCommand("mute").setTabCompleter(muteCmd);
+
+      io.github.freecoreessentials.command.MuteCommand unmuteCmd = new io.github.freecoreessentials.command.MuteCommand(this.crossServer, this.lang, true);
+      this.requireCommand("unmute").setExecutor(unmuteCmd);
+      this.requireCommand("unmute").setTabCompleter(unmuteCmd);
+
       this.fotiaTagsSync = new FotiaTagsSyncService(this);
       this.fotiaTagsSync.start();
-      this.getLogger().info("Enabled cross-server /give, /tp and /invsee bridge.");
+      this.getLogger().info("Enabled cross-server commands, maintenance, sudo, gm, speeds, say, ping, nick, msg, mute and /invsee bridge.");
    }
 
 
@@ -252,6 +343,7 @@ public final class FreeCoreEssentialsPlugin extends JavaPlugin {
       this.requireCommand("home").setTabCompleter(homeCommand);
       this.requireCommand("sethome").setExecutor(setHomeCommand);
       this.requireCommand("sethome").setTabCompleter(setHomeCommand);
+      this.requireCommand("rtp").setExecutor(new RandomTeleportCommand(this, this.lang));
    }
 
    public boolean createWealthHologram(org.bukkit.Location location) {
@@ -314,6 +406,10 @@ public final class FreeCoreEssentialsPlugin extends JavaPlugin {
       if (this.isEnabled()) {
          this.getServer().getPluginManager().disablePlugin(this);
       }
+   }
+
+   public CrossServerCommandService getCrossServer() {
+      return this.crossServer;
    }
 
    private void closeDatabase() {

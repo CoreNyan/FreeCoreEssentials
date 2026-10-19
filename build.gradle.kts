@@ -3,7 +3,7 @@ plugins {
 }
 
 group = "io.github.freecoreessentials"
-version = "2.1.1"
+version = "2.1.3"
 
 repositories {
     mavenCentral()
@@ -20,6 +20,9 @@ dependencies {
     compileOnly("me.clip:placeholderapi:2.12.3")
     compileOnly(files("C:/MCSManager/daemon/data/InstanceData/FreeCore-Survival/plugins/DonutScoreboard-1.8.jar"))
     compileOnly(files("C:/MCSManager/daemon/data/InstanceData/FreeCore-Survival/plugins/HuskSync.jar"))
+    compileOnly(fileTree("C:/MCSManager/daemon/data/InstanceData/FreeCore-Survival/plugins") {
+        include("*SimpleVanish*.jar")
+    })
 
     implementation("com.zaxxer:HikariCP:6.3.2")
     implementation("com.mysql:mysql-connector-j:9.4.0")

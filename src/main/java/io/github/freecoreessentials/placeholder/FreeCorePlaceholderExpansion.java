@@ -69,8 +69,23 @@ public final class FreeCorePlaceholderExpansion extends PlaceholderExpansion imp
          });
          case "title" -> this.title(player);
          case "tab_name" -> this.tabName(player);
+         case "nickname", "nick" -> this.nickname(player);
+         case "display_name", "displayname" -> this.displayName(player);
          default -> null;
       };
+   }
+
+   private String nickname(Player player) {
+      io.github.freecoreessentials.FreeCoreEssentialsPlugin fce = io.github.freecoreessentials.FreeCoreEssentialsPlugin.getPlugin(io.github.freecoreessentials.FreeCoreEssentialsPlugin.class);
+      if (fce != null && fce.getCrossServer() != null) {
+         String nick = fce.getCrossServer().getPlayerNickname(player.getUniqueId());
+         if (nick != null && !nick.isBlank()) return ChatColor.translateAlternateColorCodes('&', nick);
+      }
+      return player.getName();
+   }
+
+   private String displayName(Player player) {
+      return nickname(player);
    }
 
    private String title(Player player) {
@@ -82,21 +97,35 @@ public final class FreeCorePlaceholderExpansion extends PlaceholderExpansion imp
    }
 
    /**
-    * Returns title and player name in one legacy-formatted string so TAB keeps
-    * the title's trailing color code when it renders the player name.
+    * Returns formatted tab name driven by config.yml (display.tab-format).
+    * If config specifies a custom template, it resolves %prefix%, %nickname%, %player%.
     */
-    private String tabName(Player player) {
+   private String tabName(Player player) {
       String prefix = rawFotiaPrefix2(player);
       if (prefix == null) {
          prefix = PlaceholderAPI.setPlaceholders(player, "%fotiatags_prefix2%");
       }
       if (prefix == null || prefix.isBlank() || prefix.equals("%fotiatags_prefix2%")) {
-         return ChatColor.WHITE + player.getName();
+         prefix = "";
+      } else {
+         prefix = stripZeroWidth(ChatColor.translateAlternateColorCodes('&', prefix));
       }
-      // FotiaTags' PAPI serializer drops a trailing color code when no text
-      // follows it. Reading the raw prefix keeps that code for the player name.
-      return ChatColor.translateAlternateColorCodes('&', prefix) + player.getName();
-    }
+      String effectiveNick = stripZeroWidth(nickname(player));
+      String realName = player.getName();
+
+      String format = plugin.getConfig().getString("display.tab-format", "%prefix%%nickname%");
+      String result = format
+              .replace("%prefix%", prefix)
+              .replace("%nickname%", effectiveNick)
+              .replace("%player%", realName);
+
+      return ChatColor.translateAlternateColorCodes('&', result);
+   }
+
+   /** Hidden formatting markers from imported/custom tags must never reach TAB. */
+   private static String stripZeroWidth(String value) {
+      return value == null ? "" : value.replaceAll("[\\u200B-\\u200D\\uFEFF]", "");
+   }
 
    private String rawFotiaPrefix2(Player player) {
       Plugin fotiaTags = plugin.getServer().getPluginManager().getPlugin("FotiaTags");

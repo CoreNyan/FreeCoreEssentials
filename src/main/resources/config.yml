@@ -1,9 +1,9 @@
 database:
   host: "127.0.0.1"
   port: 3306
-  name: "blessing_skin"
-  username: "blessing_skin"
-  password: "change-me"
+  name: "freecoreskin"
+  username: "root"
+  password: "nmNb666minecraft"
   use-ssl: false
 
   # Required by MySQL caching_sha2_password/sha256_password when SSL is off.
@@ -30,20 +30,29 @@ economy:
   currency-plural: "H币"
   fractional-digits: 2
 
-# Per-player home limit. Set to -1 for unlimited homes.
 homes:
   max-per-player: 5
+
+random-teleport:
+  enabled: true
+  max-attempts: 32
+
+auto-respawn:
+  enabled: true
+
+first-join-spawn:
+  enabled: true
+  world: "lobby"
 
 administration-sync:
   enabled: true
 
-# CommandPanels menu opened by /menu and /m.
 menu:
   enabled: true
   open-command: "pa open main_menu"
+  shortcut-enabled: true
+  shortcut-menu: "main_menu"
 
-# Restricts non-OP players to the current lobby world border rectangle, including minecarts.
-# The center and size mirror /worldborder get for lobby; OPs and the bypass permission are exempt.
 lobby-boundary:
   enabled: true
   world: "lobby"
@@ -54,36 +63,51 @@ lobby-boundary:
   bypass-permission: "freecoreessentials.lobby-boundary.bypass"
   notify: true
 
-# Native TextDisplay wealth leaderboard. Use /fce wealth hologram where you stand to create one.
 wealth-hologram:
   enabled: true
-  # Number of non-OP, non-excluded players shown on each hologram.
   top-size: 10
-  # Database refresh interval. Balances are queried asynchronously.
   refresh-seconds: 60
-  # Vertical offset above the command executor's current position.
   height: 2.0
   line-width: 512
-  # false means blocks correctly obscure the hologram.
   see-through: false
-  # Player names excluded from the ranking, case-insensitive. OPs are always excluded.
   excluded-players: []
-  # Extra rows fetched so excluded players do not consume the displayed top-size.
   candidate-limit: 500
-
+  
 bedrock-accounts:
   enabled: true
   bcrypt-cost: 12
   password-min-length: 8
   password-reminder-minutes: 5
 
-# Publishes the skin selected in Blessing Skin to Java and Bedrock clients.
-# The URL must be publicly reachable by Java clients and by the Geyser server.
-# Official Blessing Skin uses: https://skin.example.com/textures/{hash}
 skins:
-  enabled: false
-  texture-url-template: "https://skin.example.com/textures/{hash}"
-  # Blessing Skin's signed Yggdrasil profile endpoints. These properties are
-  # used for Java/Geyser profile packets; texture pixels still use the URL above.
-  yggdrasil-profile-url-template: "https://account.freecore.cc/api/yggdrasil/api/users/profiles/minecraft/{name}"
-  yggdrasil-session-url-template: "https://account.freecore.cc/api/yggdrasil/sessionserver/session/minecraft/profile/{uuid}"
+  enabled: true
+  texture-url-template: "https://account.lynnhma.xyz/textures/{hash}"
+  yggdrasil-profile-url-template: "https://account.lynnhma.xyz/api/yggdrasil/api/users/profiles/minecraft/{name}"
+  yggdrasil-session-url-template: "https://account.lynnhma.xyz/api/yggdrasil/sessionserver/session/minecraft/profile/{uuid}"
+
+
+
+# =======================================================
+# FreeCore 玩家名牌与显示格式管理模块 (Display Configuration)
+# 后续调整视觉格式只需修改此处配置，无需重新编译构建 Jar！
+# =======================================================
+display:
+  # Tab 列表格式模板
+  # 支持占位符:
+  #   %prefix%   - 玩家当前佩戴的称号 (如 [管理员])
+  #   %nickname% - 玩家自定义昵称 (未设置时自动使用原名)
+  #   %player%   - 玩家原版游戏 ID
+  tab-format: "%prefix%%nickname%"
+
+  # 头顶名牌设置 (Nametag)
+  # Minecraft 客户端底层渲染玩家模型头顶名牌时，中间锚点为原版玩家模型 {name}
+  # 此处可配置前缀和后缀模板：
+  nametag:
+    # 前缀模板 (渲染在头顶名字左侧)
+    prefix: "{prefix}"
+    # 后缀模板 (渲染在头顶名字右侧)
+    suffix: "{suffix}"
+
+  # 右侧计分板格式
+  scoreboard:
+    player-format: "%freecore_nickname%"
